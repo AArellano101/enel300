@@ -2,7 +2,7 @@
 
 This project uses an STM32 microcontroller to control **two DC motors**, communicate over **Bluetooth (HC-05)**, and read a **metal detection circuit** using an **ADC input**. 
 
----
+<br>
 
 ## Features
 
@@ -10,7 +10,7 @@ This project uses an STM32 microcontroller to control **two DC motors**, communi
 - **Bluetooth serial communication (HC-05, slave mode)** using USART TX/RX
 - **Metal detection sensing** using an ADC input and a GPIO output
 
----
+<br>
 
 ## Pin Assignments
 
@@ -27,7 +27,6 @@ Two motors are controlled via PWM using two pins per motor (IN1/IN2 style contro
 
 > These four pins generate PWM signals to drive a DRV8833 motor driver for bidirectional motor control.
 
----
 
 ### Bluetooth Module (HC-05) — USART
 HC-05 is used as a **slave** Bluetooth module and is controlled over UART.
@@ -35,7 +34,6 @@ HC-05 is used as a **slave** Bluetooth module and is controlled over UART.
 - `PA9`  → USART **TX** (STM32 → HC-05 RX)
 - `PC5`  → USART **RX** (STM32 ← HC-05 TX)
 
----
 
 ### Metal Detection Circuit — ADC + GPIO
 The metal detection circuit (see schematic image) interfaces to the STM32 with:
