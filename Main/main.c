@@ -53,7 +53,8 @@ volatile uint32_t lastSignalTime  = 0;
 volatile uint32_t signalTimeDelta = 0;
 volatile uint8_t  firstSignal     = 1;
 volatile uint32_t storedTimeDelta = 0;
-volatile uint32_t interruptCount  = 0;
+volatile uint32_t metalDetectionCount =0;
+volatile uint32_t metalDetectionThreshold = 3;
 
 uint32_t lastPrintTime = 0;
 
@@ -296,35 +297,33 @@ int main(void)
 	if (ENABLE_METAL_DETECTION == 1) {
 		int32_t diff = (int32_t)((int32_t)(storedTimeDelta - signalTimeDelta) * SENSITIVITY);
 
-		    // Drive LED on PA6
-		    HAL_GPIO_WritePin(LED_PORT, LED_PIN,
-		      diff > LED_THRESHOLD ? GPIO_PIN_SET : GPIO_PIN_RESET);
-
 		    // Serial print every SERIAL_INTERVAL_MS
 		    uint32_t now = HAL_GetTick();
 		    if (now - lastPrintTime >= SERIAL_INTERVAL_MS)
 		    {
-		      lastPrintTime = now;
-		      if (storedTimeDelta == 0)
-		      {
-		        printf("Calibrating... Interrupts: %lu\r\n", interruptCount);
-		      }
-		      else
-		      {
-//		        printf("Baseline: %lu us  |  Current: %lu us  |  Diff: %ld  |  Metal: %s\r\n",
-//		          storedTimeDelta,
-//		          signalTimeDelta,
-//		          diff,
-//		          diff > LED_THRESHOLD ? "YES" : "no");
-
-		    	printf("Metal: %s\r\n", diff > LED_THRESHOLD ? "YES" : "no");
-
-		        if (diff > LED_THRESHOLD) {
-		        	playTone(500);
-		        } else {
-		        	stopTone();
+		        lastPrintTime = now;
+		        if (storedTimeDelta == 0)
+		        {
+		            printf("Calibrating... ");
 		        }
-		      }
+		        else
+		        {
+		            if (diff > LED_THRESHOLD) {
+		                metalDetectionCount++;
+		            } else {
+		                metalDetectionCount = 0;
+		            }
+
+		            printf("Metal: %s (count: %lu)\r\n",
+		                   metalDetectionCount >= metalDetectionThreshold ? "YES" : "no",
+		                   metalDetectionCount);
+
+		            if (metalDetectionCount >= metalDetectionThreshold) {
+		                playTone(500);
+		            } else {
+		                stopTone();
+		            }
+		        }
 		    }
 		    HAL_Delay(100);
 	}
