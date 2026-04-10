@@ -53,8 +53,7 @@ volatile uint32_t lastSignalTime  = 0;
 volatile uint32_t signalTimeDelta = 0;
 volatile uint8_t  firstSignal     = 1;
 volatile uint32_t storedTimeDelta = 0;
-volatile uint32_t interruptCount  = 0;
-volatile uint32_t metalDetectionCount = 0;
+volatile uint32_t metalDetectionCount =0;
 volatile uint32_t metalDetectionThreshold = 3;
 
 uint32_t lastPrintTime = 0;
@@ -83,7 +82,6 @@ uint8_t metalbeatPlaying = 0;
 uint8_t metalbeatnoteon = 0;
 uint8_t metalbeatindex = 0;
 uint32_t metalbeatnextms = 0;
-
 
 /* USER CODE END PV */
 
@@ -162,17 +160,21 @@ void stopTone(void)
 {
   HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
 }
-
 typedef uint16_t note_t;
 
 void playSong(const note_t *notes, const uint16_t *durations, int count, uint32_t gapMs)
 {
     for (int i = 0; i < count; i++) {
-        playTone(notes[i]);
+        if (notes[i] > 0) {
+            playTone(notes[i]);
+        } else {
+            stopTone();
+        }
+
         HAL_Delay(durations[i]);
+        stopTone();
         HAL_Delay(gapMs);
     }
-
 }
 
 void playStartupTune(void)
@@ -195,18 +197,80 @@ void playStartupTune(void)
 void playMetalDetect(void)
 {
     static const note_t notes[] = {
-        //900, 1450, 2400, 2850
-
-    	500, 550, 600, 650
+        900, 1450, 2400, 2850
     };
 
     static const uint16_t durations[] = {
         45, 55, 85, 160
     };
 
-    playSong(notes, durations, 4, 100);
+    playSong(notes, durations, 4, 10);
 }
 
+/* metal beat data */
+static const note_t metalbeatnotes[] = {
+    1760, 2093, 2349, 2093, 0,
+    1760, 2093, 2620, 2349, 0,
+    2093, 1760, 2349, 2620, 2093
+};
+
+static const uint16_t metalbeatdurations[] = {
+    75,  75,  110, 75,  40,
+    80,  100, 140, 100, 45,
+    90,  90,  110, 150, 220
+};
+
+
+/* starts looping beat */
+void playMetalBeat(void)
+{
+    metalbeatPlaying = 1;
+    metalbeatnoteon = 0;
+    metalbeatindex = 0;
+    metalbeatnextms = HAL_GetTick();
+}
+
+/* calls this every loop */
+void updateMetalBeat(void)
+{
+    uint32_t now = HAL_GetTick();
+
+    if (!metalbeatPlaying) return;
+    if (now < metalbeatnextms) return;
+
+    if (!metalbeatnoteon)
+    {
+        if (metalbeatnotes[metalbeatindex] > 0) {
+            playTone(metalbeatnotes[metalbeatindex]);
+        } else {
+            stopTone();
+        }
+
+        metalbeatnoteon = 1;
+        metalbeatnextms = now + metalbeatdurations[metalbeatindex];
+    }
+    else
+    {
+        stopTone();
+        metalbeatnoteon = 0;
+        metalbeatindex++;
+
+        if (metalbeatindex >= METALBEATCOUNT) {
+            metalbeatindex = 0;   // loop forever while on metal
+        }
+
+        metalbeatnextms = now + 14;   // small gap between notes
+    }
+}
+
+/* stops beat immediately */
+void stopMetalBeat(void)
+{
+    metalbeatPlaying = 0;
+    metalbeatnoteon = 0;
+    metalbeatindex = 0;
+    stopTone();
+}
 
 
 // 				BLUETOOTH FUNCTIONS
@@ -341,186 +405,179 @@ int main(void)
   HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
 
   stopTone();
-  //playStartupTune();
+  playStartupTune();
 
-  uint32_t arr = (84000000 / (84 * 20000)) - 1;   // 49
-  htim5.Instance->ARR  = arr;
-  htim5.Instance->CCR1 = (arr + 1) / 2;           // 25 = 50%
-  HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {
+{
+    updateMetalBeat();
 
-	  printf("\n\n--------------------------------------\r\n");
-	  if (ENABLE_METAL_DETECTION == 1) {
-	          int32_t diff = (int32_t)((int32_t)(storedTimeDelta - signalTimeDelta) * SENSITIVITY);
+    printf("\n\n--------------------------------------\r\n");
 
-	          uint32_t now = HAL_GetTick();
-	          if (now - lastPrintTime >= SERIAL_INTERVAL_MS)
-	          {
-	              lastPrintTime = now;
+    if (ENABLE_METAL_DETECTION == 1) {
+        int32_t diff = (int32_t)((int32_t)(storedTimeDelta - signalTimeDelta) * SENSITIVITY);
 
-	              if (storedTimeDelta == 0)
-	              {
-	                  printf("Calibrating... ");
-	              }
-	              else
-	              {
-	                  if (diff > LED_THRESHOLD) {
-	                      metalDetectionCount++;
-	                  } else {
-	                      metalDetectionCount = 0;
-	                  }
+        uint32_t now = HAL_GetTick();
+        if (now - lastPrintTime >= SERIAL_INTERVAL_MS)
+        {
+            lastPrintTime = now;
 
-	                  uint8_t metalNow = (metalDetectionCount >= metalDetectionThreshold);
+            if (storedTimeDelta == 0)
+            {
+                printf("Calibrating... ");
+            }
+            else
+            {
+                if (diff > LED_THRESHOLD) {
+                    metalDetectionCount++;
+                } else {
+                    metalDetectionCount = 0;
+                }
 
-	                  printf("Metal: %s (count: %lu)\r\n",
-	                         metalNow ? "YES" : "no",
-	                         metalDetectionCount);
+                uint8_t metalNow = (metalDetectionCount >= metalDetectionThreshold);
 
-	                  if (metalNow) {
-	                      playMetalDetect();
-	                      printf("play tune\r\n");
-	                  } else {
-	                	  stopTone();
-	                  }
-	              }
-	          }
-	      }
+                printf("Metal: %s (count: %lu)\r\n",
+                       metalNow ? "YES" : "no",
+                       metalDetectionCount);
 
-	if (ENABLE_OBJ_DETECTION == 1) {
-		HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
-		micros();
-		micros();
-		HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_SET);
+                if (metalNow && !metalLatched) {
+                    playMetalDetect();
+                    pendingDance = 1;
+                    dancePlayed = 0;
+                    danceAtMs = HAL_GetTick() + 1000;
+                }
 
-		for (int i = 0 ; i < 10; i++) { micros();}
+                if (metalNow && pendingDance && !dancePlayed) {
+                    if (HAL_GetTick() >= danceAtMs) {
+                        playMetalBeat();   // starts looping
+                        dancePlayed = 1;
+                        pendingDance = 0;
+                    }
+                }
 
-		HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
+                if (!metalNow && metalLatched) {
+                    pendingDance = 0;
+                    dancePlayed = 0;
+                    stopMetalBeat();      // stops immediately
+                }
 
+                metalLatched = metalNow;
+            }
+        }
 
-		uint32_t t0 = HAL_GetTick();
-		while (!echo_done && (HAL_GetTick() - t0 < 100));
+        HAL_Delay(1);
+    }
 
-		if (echo_pulse_us < 40000) {
-			// original ratio:  11.5 / 610.0
-			float distance = echo_pulse_us * 0.01791810;
+    if (ENABLE_OBJ_DETECTION == 1) {
+        HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
+        micros();
+        micros();
+        HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_SET);
 
-			int rounded = distance * 100 / 1;
+        for (int i = 0 ; i < 10; i++) { micros();}
 
-			//snprintf(lcd_buf, sizeof(lcd_buf), "Distance = %.2f cm\r\n", distance);
-			//printf("Pulse:  %d \r\n", echo_pulse_us);
+        HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
 
-			// SEND VIA BLUETOOTH "distance" VARIBALE
-			printf("Distance = %.2f cm, Rounded = %d cm\r\n", distance, rounded);
-			if (ENABLE_BT_OBJ == 1) {
-				char buffer_o[25];
-				printf("Sending signal...\r\n");
+        uint32_t t0 = HAL_GetTick();
+        while (!echo_done && (HAL_GetTick() - t0 < 100));
 
-				int len = snprintf(buffer_o, sizeof(buffer_o), "%d\n", rounded);
-				HAL_UART_Transmit(&huart3, (uint8_t *)buffer_o, len, HAL_MAX_DELAY);
-			}
-			//lcd_puts(&lcd1, lcd_buf);
-		} else {
-			printf("\n");
-		}
+        if (echo_pulse_us < 40000) {
+            HAL_Delay(100);
+            char lcd_buf[17];
+            float distance = echo_pulse_us * 11.5 / 610.0;
 
-		//HAL_Delay(100);
-	}
+            int rounded = distance * 100 / 1;
 
-	if (TOGGLE_LED == 1) {
-		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-		HAL_Delay(500);
-	}
+            printf("Distance = %.2f cm, Rounded = %d cm\r\n", distance, rounded);
+            if (ENABLE_BT_OBJ == 1) {
+                char buffer_o[25];
+                printf("Sending signal...\r\n");
 
-	if (ENABLE_MOTOR_SIGNAL == 1) {
-		printf("Running tim3 and tim4 pwm gen.\r\n");
-		motor1(0, 1.0, 0);
-		motor2(0, 1.0, 0);
-//		HAL_Delay(1-00);
-//		stopMotor1();
-//		stopMotor2();
-	}
+                int len = snprintf(buffer_o, sizeof(buffer_o), "%d\n", rounded);
+                HAL_UART_Transmit(&huart3, (uint8_t *)buffer_o, len, HAL_MAX_DELAY);
+            }
+        } else {
+            printf("\n");
+        }
+    }
 
-	if (ENABLE_BT_MOTOR == 1) {
-		if (line_ready)
-		{
-		    char local[24];
-		    int l, r, q;
+    if (TOGGLE_LED == 1) {
+        HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+        HAL_Delay(500);
+    }
 
-		    __disable_irq();
-		    strncpy(local, rx_line, sizeof(local));
-		    local[sizeof(local) - 1] = '\0';
-		    line_ready = 0;
-		    __enable_irq();
+    if (ENABLE_MOTOR_SIGNAL == 1) {
+        printf("Running tim3 and tim4 pwm gen.\r\n");
+        motor1(0, 1.0, 0);
+        motor2(0, 1.0, 0);
+        HAL_Delay(100);
+        stopMotor1();
+        stopMotor2();
+    }
 
-		    //printf("RX: %s\r\n", local);
+    if (ENABLE_BT_MOTOR == 1) {
+        if (line_ready)
+        {
+            char local[24];
+            int l, r, q;
 
-		    if (sscanf(local, "L:%d,R:%d,HL:%d\n", &l, &r, &q) == 3)
-		    {
-		        bt_motorL = (int16_t)l;
-		        bt_motorR = (int16_t)r;
-		        bt_light = (int16_t)q;
+            __disable_irq();
+            strncpy(local, rx_line, sizeof(local));
+            local[sizeof(local) - 1] = '\0';
+            line_ready = 0;
+            __enable_irq();
 
-		        if (bt_light == 0) {
+            if (sscanf(local, "L:%d,R:%d,HL:%d\n", &l, &r, &q) == 3)
+            {
+                bt_motorL = (int16_t)l;
+                bt_motorR = (int16_t)r;
+                bt_light = (int16_t)q;
 
-		        	printf("Light: on\r\n");
-		        	HAL_GPIO_WritePin(LIGHT_PORT, LIGHT_PIN, GPIO_PIN_SET);
-		        } else if (bt_light == 1) {
-		        	printf("Light: off\r\n");
-		        	HAL_GPIO_WritePin(LIGHT_PORT, LIGHT_PIN, GPIO_PIN_RESET);
-		        }
+                if (bt_light == 0) {
+                    printf("Light: on\r\n");
+                    HAL_GPIO_WritePin(LIGHT_PORT, LIGHT_PIN, GPIO_PIN_SET);
+                } else if (bt_light == 1) {
+                    printf("Light: off\r\n");
+                    HAL_GPIO_WritePin(LIGHT_PORT, LIGHT_PIN, GPIO_PIN_RESET);
+                }
 
+                printf("Parsed -> L:%d R:%d\r\n", bt_motorL, bt_motorR);
+                printf("%f, %f\r\n", bt_motorL/100.0, bt_motorR/100.0);
 
+                if (bt_motorL > 0) {
+                    motor1(0, bt_motorL/100.0, 0);
+                } else if (bt_motorL < 0) {
+                    motor1(0, bt_motorL/100.0, 1);
+                } else {
+                    stopMotor1();
+                }
 
-
-		        printf("Parsed -> L:%d R:%d\r\n", bt_motorL, bt_motorR);
-
-		        if (bt_motorL > 0) {
-		        	motor1(0, bt_motorL/100.0, 0);
-		        } else if (bt_motorL < 0) {
-		        	motor1(0, bt_motorL/100.0, 1);
-		        } else {
-		        	stopMotor1();
-		        }
-
-		        if (bt_motorR > 0) {
-					motor2(0, bt_motorR/100.0, 0);
-				}
-		        else if (bt_motorR < 0) {
-		        	motor2(0, bt_motorR/100.0, 1);
-		        } else {
-					stopMotor2();
-				}
-		        // use bt_motorL and bt_motorR here
-		    }
-		    else
-		    {
-		        printf("Bad packet: %s\r\n", local);
-		    }
-		}
-	}
-
-	if (WALLE == 1) {
-
-			// PSC = 83, F_CLK = 84,000,000
-
-
-
-
-	}
+                if (bt_motorR > 0) {
+                    motor2(0, bt_motorR/100.0, 0);
+                } else if (bt_motorR < 0) {
+                    motor2(0, bt_motorR/100.0, 1);
+                } else {
+                    stopMotor2();
+                }
+            }
+            else
+            {
+                printf("Bad packet: %s\r\n", local);
+            }
+        }
+        HAL_Delay(100);
+    }
+}
 
 
-	HAL_Delay(WHILE_DELAY);
 
-  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
+  }
   /* USER CODE END 3 */
 }
 
@@ -585,8 +642,6 @@ static void MX_TIM1_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
 
@@ -607,41 +662,15 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
-  {
-    Error_Handler();
-  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
-  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
-  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -846,7 +875,6 @@ static void MX_TIM5_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM5_Init 1 */
 
@@ -866,28 +894,15 @@ static void MX_TIM5_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_Init(&htim5) != HAL_OK)
-  {
-    Error_Handler();
-  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN TIM5_Init 2 */
 
   /* USER CODE END TIM5_Init 2 */
-  HAL_TIM_MspPostInit(&htim5);
 
 }
 

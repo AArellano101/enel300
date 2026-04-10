@@ -53,7 +53,15 @@ uint16_t joy2 = 0;
 uint16_t rawValues[2];
 int16_t motorL = 0;
 int16_t motorR = 0;
+uint8_t headlights = 0;
 char msg[32];
+
+uint8_t rx_byte;
+char buffer[32];
+uint8_t buffer_idx = 0;
+char rx_line[32];
+volatile uint8_t line_ready = 0;
+char distanceBuf[32];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -69,39 +77,106 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void Send_Value(int16_t value)
-{
-  char buf[8];
-  int len = snprintf(buf, sizeof(buf), "%d\n", value);
-  HAL_UART_Transmit(&huart1, (uint8_t *)buf, len, HAL_MAX_DELAY);
-}
-void Send_Toggle(void)
-{
-  static uint8_t toggle = 0;
-  toggle ^= 1;
-  HAL_UART_Transmit(&huart1, &toggle, 1, HAL_MAX_DELAY);
-}
 
-void Read_JoystickValues(void)
+/* USER CODE BEGIN 0 */
+
+// ─── LCD low-level helpers ───────────────────────────────────────────────────
+
+static void LCD_Pulse_Enable(void)
 {
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)rawValues, 2);
+    HAL_GPIO_WritePin(E_GPIO_Port, E_Pin, GPIO_PIN_SET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(E_GPIO_Port, E_Pin, GPIO_PIN_RESET);
+    HAL_Delay(1);
 }
 
-void Print_JoystickValues(void)
+static void LCD_Send_Nibble(uint8_t nibble)
 {
-  joy1 = rawValues[0];  /* Rank 1: PC2 = CH12 = Y... wait, per pinout: CH12=Y, CH13=X */
-  joy2 = rawValues[1];  /* Rank 2: PC3 = CH13 = X */
+    HAL_GPIO_WritePin(D4_GPIO_Port, D4_Pin, (nibble & 0x01) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(D5_GPIO_Port, D5_Pin, (nibble & 0x02) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(D6_GPIO_Port, D6_Pin, (nibble & 0x04) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(D7_GPIO_Port, D7_Pin, (nibble & 0x08) ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-  int len = snprintf(msg, sizeof(msg), "X:%u Y:%u\r\n", joy1, joy2);
-  HAL_UART_Transmit(&huart2, (uint8_t *)msg, len, HAL_MAX_DELAY);
+    LCD_Pulse_Enable();
+}
+
+static void LCD_Send_Byte(uint8_t byte, uint8_t isData)
+{
+    HAL_GPIO_WritePin(RS_GPIO_Port, RS_Pin, isData ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    LCD_Send_Nibble(byte >> 4);
+    LCD_Send_Nibble(byte & 0x0F);
+}
+
+void LCD_Init(void)
+{
+    HAL_Delay(50);
+
+    HAL_GPIO_WritePin(RS_GPIO_Port, RS_Pin, GPIO_PIN_RESET);
+    LCD_Send_Nibble(0x03); HAL_Delay(5);
+    LCD_Send_Nibble(0x03); HAL_Delay(1);
+    LCD_Send_Nibble(0x03); HAL_Delay(1);
+
+    LCD_Send_Nibble(0x02); HAL_Delay(1);
+
+    LCD_Send_Byte(0x28, 0); HAL_Delay(1);
+    LCD_Send_Byte(0x0C, 0); HAL_Delay(1);
+    LCD_Send_Byte(0x06, 0); HAL_Delay(1);
+    LCD_Send_Byte(0x01, 0); HAL_Delay(2);
+}
+
+void LCD_Clear(void)
+{
+    LCD_Send_Byte(0x01, 0);
+    HAL_Delay(2);
+}
+
+void LCD_Set_Cursor(uint8_t row, uint8_t col)
+{
+    // Row 0 starts at 0x80, row 1 starts at 0xC0
+    uint8_t addr = (row == 0 ? 0x80 : 0xC0) + col;
+    LCD_Send_Byte(addr, 0);
+    HAL_Delay(1);
+}
+
+// ─── Main display function ───────────────────────────────────────────────────
+
+/**
+ * @brief  Display a string on the LCD at the current cursor position.
+ * @param  text: null-terminated string to display
+ */
+void LCD_Display(const char *text)
+{
+    while (*text)
+    {
+        LCD_Send_Byte((uint8_t)*text++, 1);
+        HAL_Delay(1);
+    }
+}
+
+void Check_Distance_Display(void)
+{
+  static GPIO_PinState lastState = GPIO_PIN_SET;
+  GPIO_PinState currentState = HAL_GPIO_ReadPin(GPIOC, r_distance_Pin);
+
+  if (line_ready)
+  {
+    strncpy(distanceBuf, rx_line, sizeof(distanceBuf));
+    line_ready = 0;
+  }
+
+  if (lastState == GPIO_PIN_SET && currentState == GPIO_PIN_RESET)
+  {
+    int len = snprintf(msg, sizeof(msg), "DIST:%s\n", distanceBuf);
+    HAL_UART_Transmit(&huart2, (uint8_t *)msg, len, HAL_MAX_DELAY);
+  }
+  lastState = currentState;
 }
 
 void Compute_MotorValues(int16_t *motorL, int16_t *motorR)
 {
-  joy1 = rawValues[0];
-  joy2 = rawValues[1];
+  joy1 = rawValues[1];
+  joy2 = rawValues[0];
 
-  /* --- Motor L from joy1 --- */
   if (joy1 >= 2000 && joy1 <= 2200)
     *motorL = 0;
   else if (joy1 > 2200)
@@ -109,7 +184,6 @@ void Compute_MotorValues(int16_t *motorL, int16_t *motorR)
   else
     *motorL = (int16_t)(((int32_t)joy1 - 2000) * 100 / (2000 - 30));
 
-  /* --- Motor R from joy2 --- */
   if (joy2 >= 2000 && joy2 <= 2200)
     *motorR = 0;
   else if (joy2 > 2200)
@@ -117,23 +191,44 @@ void Compute_MotorValues(int16_t *motorL, int16_t *motorR)
   else
     *motorR = (int16_t)(((int32_t)joy2 - 2000) * 100 / (2000 - 30));
 
-  /* clamp to -100 / 100 */
   if (*motorL > 100)  *motorL =  100;
   if (*motorL < -100) *motorL = -100;
   if (*motorR > 100)  *motorR =  100;
   if (*motorR < -100) *motorR = -100;
+
+  *motorL *= -1;
+  *motorR *= -1;
+
 }
 
 void Print_MotorValues(int16_t motorL, int16_t motorR)
 {
-  int len = snprintf(msg, sizeof(msg), "L:%d R:%d\r\n", motorL, motorR);
+  int len = snprintf(msg, sizeof(msg), "L:%d R:%d HL:%d\r\n",
+                     motorL, motorR, headlights);
   HAL_UART_Transmit(&huart2, (uint8_t *)msg, len, HAL_MAX_DELAY);
 }
+
 void Send_MotorValues(int16_t motorL, int16_t motorR)
 {
-  char buf[24];
-  int len = snprintf(buf, sizeof(buf), "L:%d,R:%d\n", motorL, motorR);
+  static GPIO_PinState lastState = GPIO_PIN_SET;
+
+  GPIO_PinState currentState = HAL_GPIO_ReadPin(turn_headlights_GPIO_Port, turn_headlights_Pin);
+  if (lastState == GPIO_PIN_SET && currentState == GPIO_PIN_RESET)
+    headlights ^= 1;
+  lastState = currentState;
+
+  char buf[32];
+  int len = snprintf(buf, sizeof(buf), "L:%d,R:%d,HL:%d\n",
+                     motorL, motorR, headlights);
   HAL_UART_Transmit(&huart1, (uint8_t *)buf, len, HAL_MAX_DELAY);
+
+
+}
+// Redirect printf to UART2
+int __io_putchar(int ch)
+{
+  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  return ch;
 }
 /* USER CODE END 0 */
 
@@ -172,6 +267,16 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)rawValues, 2);
+  HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+  HAL_UART_Transmit(&huart2, (uint8_t *)"BOOT\n", 5, HAL_MAX_DELAY);
+
+  LCD_Init();
+  LCD_Set_Cursor(0, 0);
+//  LCD_Display("Hello World");     // row 0
+//  HAL_Delay(2000);
+
+  LCD_Set_Cursor(1, 0);
+  LCD_Display("Distance: --");    // row 1
 
   /* USER CODE END 2 */
 
@@ -179,10 +284,56 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+//	  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15 | GPIO_PIN_7, GPIO_PIN_SET);
+//	  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+//	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_SET);
+//	  HAL_Delay(86400000);
+	  	  		if (line_ready)
+	  		{
+	  		    char local[24];
+	  		    int l;
+
+	  		    __disable_irq();
+	  		    strncpy(local, rx_line, sizeof(local));
+	  		    local[sizeof(local) - 1] = '\0';
+	  		    line_ready = 0;
+	  		    __enable_irq();
+
+	  		    //printf("RX: %s\r\n", local);
+
+	  		    if (sscanf(local, "%d", &l) == 1)
+	  		    {
+	  		    	//printf("%d\r\n",l);
+	  		    	int whole = l / 100;
+	  		    	int frac  = l % 100;
+
+	  		    	// UART (PuTTY)
+	  		    	printf("dist %d.%02d cm\r\n", whole, frac);
+
+	  		    	// LCD
+	  		    	char lcdBuf[16];
+	  		    	snprintf(lcdBuf, sizeof(lcdBuf), "Dist:%d.%02d", whole, frac);
+	  		    	LCD_Clear();
+	  		    	LCD_Set_Cursor(1, 0);
+	  		    	LCD_Display("Dist:        ");
+	  		    	LCD_Set_Cursor(1, 5);
+	  		    	LCD_Display(lcdBuf + 5);
+
+
+	  		    	//HAL_UART_Transmit(&huart2, (uint8_t *)msg, len, HAL_MAX_DELAY);
+	  		    }
+	  		    else
+	  		    {
+	  		        printf("Bad packet: %s\r\n", local);
+	  		    }
+	  		}
+
 	  Compute_MotorValues(&motorL, & motorR);
 	  Print_MotorValues(motorL, motorR);
 	  Send_MotorValues(motorL, motorR);    // transmit on UART1 via HC-05
-	  HAL_Delay(1000);
+
+
+	  HAL_Delay(100);
 
 //	  Print_JoystickValues();
 //	  Send_Value(-124);
@@ -273,7 +424,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
-  sConfig.Channel = ADC_CHANNEL_12;
+  sConfig.Channel = ADC_CHANNEL_6;
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
@@ -384,6 +535,7 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
@@ -391,6 +543,49 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, RS_Pin|D7_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(D5_GPIO_Port, D5_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, E_Pin|D4_Pin|D6_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : RS_Pin D7_Pin */
+  GPIO_InitStruct.Pin = RS_Pin|D7_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : r_distance_Pin */
+  GPIO_InitStruct.Pin = r_distance_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(r_distance_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : D5_Pin */
+  GPIO_InitStruct.Pin = D5_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(D5_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : E_Pin D4_Pin D6_Pin */
+  GPIO_InitStruct.Pin = E_Pin|D4_Pin|D6_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : turn_headlights_Pin */
+  GPIO_InitStruct.Pin = turn_headlights_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(turn_headlights_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -398,6 +593,46 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == &huart1)
+
+    {
+        char c = (char)rx_byte;
+
+
+        if (c == '\r')
+        {
+            // ignore carriage return
+        }
+        else if (c == '\n')
+        {
+
+            buffer[buffer_idx] = '\0';
+
+            strncpy(rx_line, buffer, sizeof(rx_line));
+            rx_line[sizeof(rx_line) - 1] = '\0';
+
+            buffer_idx = 0;
+            line_ready = 1;
+        }
+        else
+        {
+            if (buffer_idx < sizeof(buffer) - 1)
+            {
+                buffer[buffer_idx++] = c;
+            }
+            else
+            {
+                // overflow protection: reset buffer
+                buffer_idx = 0;
+            }
+        }
+
+        HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+    }
+}
 
 /* USER CODE END 4 */
 
