@@ -78,20 +78,53 @@ void Error_Handler(void);
 #define CYCLES_PER_SIGNAL   500
 #define LED_THRESHOLD       700
 #define SENSITIVITY         40.0f
-#define SERIAL_INTERVAL_MS  200
+#define SERIAL_INTERVAL_MS  50
 
 // Pins
+
+// Oscillator for metal detection; GREEN WIRE
 #define OSCILLATOR_PIN      GPIO_PIN_0
-#define OSCILLATOR_PORT     GPIOA
+#define OSCILLATOR_PORT     GPIOB
+
+// PWM Pin for noise generation, uses tim2; WHITE WIRE
+#define NOISE_PIN 			GPIO_PIN_15
+#define NOISE_PORT			GPIOA
+
+
+
+
 #define LED_PIN             GPIO_PIN_7
 #define LED_PORT            GPIOC
+
+// Pins for Ultrasonic Sensor
 #define ECHO_PIN 			GPIO_PIN_1
 #define ECHO_PORT           GPIOA
 #define TRIG_PIN 			GPIO_PIN_1
 #define TRIG_PORT           GPIOB
 
-#define ENABLE_METAL_DETECTION 0
-#define ENABLE_OBJ_DETECTION 1
+
+#define NSLEEP_PIN			GPIO_PIN_9
+#define NSLEEP_PORT			GPIOC
+
+#define LIGHT_PIN			GPIO_PIN_12
+#define LIGHT_PORT			GPIOA
+
+
+#define BT_TXD_PIN			GPIO_PIN_5
+#define BT_TXD_PORT			GPIOC
+
+#define BT_RXD_PIN			GPIO_PIN_10
+#define BT_RXD_PORT			GPIOB
+
+
+
+
+#define ENABLE_METAL_DETECTION 		1
+#define ENABLE_OBJ_DETECTION 		1
+#define TOGGLE_LED 					0
+#define ENABLE_MOTOR_SIGNAL 		0
+#define ENABLE_BT_MOTOR 			1
+#define ENABLE_BT_OBJ				1
 
 /* USER CODE END Private defines */
 
