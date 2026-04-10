@@ -54,6 +54,9 @@ volatile uint32_t signalTimeDelta = 0;
 volatile uint8_t  firstSignal     = 1;
 volatile uint32_t storedTimeDelta = 0;
 volatile uint32_t interruptCount  = 0;
+volatile uint32_t metalDetectionCount = 0;
+volatile uint32_t metalDetectionThreshold = 3;
+
 
 uint32_t lastPrintTime = 0;
 
@@ -71,6 +74,16 @@ volatile uint8_t line_ready = 0;
 int16_t bt_motorL = 0;
 int16_t bt_motorR = 0;
 int16_t bt_light = 0;
+
+uint8_t metalLatched = 0;
+uint8_t pendingDance = 0;
+uint8_t dancePlayed = 0;
+uint32_t danceAtMs = 0;
+
+uint8_t metalbeatPlaying = 0;
+uint8_t metalbeatnoteon = 0;
+uint8_t metalbeatindex = 0;
+uint32_t metalbeatnextms = 0;
 
 
 /* USER CODE END PV */
@@ -149,6 +162,50 @@ void playTone(uint32_t frequency)
 void stopTone(void)
 {
   HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1);
+}
+
+typedef uint16_t note_t;
+
+void playSong(const note_t *notes, const uint16_t *durations, int count, uint32_t gapMs)
+{
+    for (int i = 0; i < count; i++) {
+        playTone(notes[i]);
+        HAL_Delay(durations[i]);
+        HAL_Delay(gapMs);
+    }
+
+}
+
+void playStartupTune(void)
+{
+    static const note_t notes[] = {
+        1175, 1175, 932, 1047, 1175, 1175,
+        1175, 1175, 1245, 1397, 1245, 1175, 1047,
+        1047, 1175, 1245, 1397, 1245, 1175, 1047
+    };
+
+    static const uint16_t durations[] = {
+        240, 240, 280, 220, 220, 420,
+        220, 220, 220, 320, 220, 220, 420,
+        260, 220, 220, 320, 220, 220, 500
+    };
+
+    playSong(notes, durations, sizeof(notes) / sizeof(notes[0]), 22);
+}
+
+void playMetalDetect(void)
+{
+    static const note_t notes[] = {
+        //900, 1450, 2400, 2850
+
+    	500, 550, 600, 650
+    };
+
+    static const uint16_t durations[] = {
+        45, 55, 85, 160
+    };
+
+    playSong(notes, durations, 4, 100);
 }
 
 
@@ -284,50 +341,56 @@ int main(void)
 
   HAL_UART_Receive_IT(&huart3, &rx_byte, 1);
 
+  stopTone();
+  //playStartupTune();
 
-
+  uint32_t arr = (84000000 / (84 * 20000)) - 1;   // 49
+  htim5.Instance->ARR  = arr;
+  htim5.Instance->CCR1 = (arr + 1) / 2;           // 25 = 50%
+  HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
 	  printf("\n\n--------------------------------------\r\n");
-	if (ENABLE_METAL_DETECTION == 1) {
-		int32_t diff = (int32_t)((int32_t)(storedTimeDelta - signalTimeDelta) * SENSITIVITY);
+	  if (ENABLE_METAL_DETECTION == 1) {
+	          int32_t diff = (int32_t)((int32_t)(storedTimeDelta - signalTimeDelta) * SENSITIVITY);
 
-		    // Drive LED on PA6
-		    HAL_GPIO_WritePin(LED_PORT, LED_PIN,
-		      diff > LED_THRESHOLD ? GPIO_PIN_SET : GPIO_PIN_RESET);
+	          uint32_t now = HAL_GetTick();
+	          if (now - lastPrintTime >= SERIAL_INTERVAL_MS)
+	          {
+	              lastPrintTime = now;
 
-		    // Serial print every SERIAL_INTERVAL_MS
-		    uint32_t now = HAL_GetTick();
-		    if (now - lastPrintTime >= SERIAL_INTERVAL_MS)
-		    {
-		      lastPrintTime = now;
-		      if (storedTimeDelta == 0)
-		      {
-		        printf("Calibrating... Interrupts: %lu\r\n", interruptCount);
-		      }
-		      else
-		      {
-//		        printf("Baseline: %lu us  |  Current: %lu us  |  Diff: %ld  |  Metal: %s\r\n",
-//		          storedTimeDelta,
-//		          signalTimeDelta,
-//		          diff,
-//		          diff > LED_THRESHOLD ? "YES" : "no");
+	              if (storedTimeDelta == 0)
+	              {
+	                  printf("Calibrating... ");
+	              }
+	              else
+	              {
+	                  if (diff > LED_THRESHOLD) {
+	                      metalDetectionCount++;
+	                  } else {
+	                      metalDetectionCount = 0;
+	                  }
 
-		    	printf("Metal: %s\r\n", diff > LED_THRESHOLD ? "YES" : "no");
+	                  uint8_t metalNow = (metalDetectionCount >= metalDetectionThreshold);
 
-		        if (diff > LED_THRESHOLD) {
-		        	playTone(500);
-		        } else {
-		        	stopTone();
-		        }
-		      }
-		    }
-		    HAL_Delay(100);
-	}
+	                  printf("Metal: %s (count: %lu)\r\n",
+	                         metalNow ? "YES" : "no",
+	                         metalDetectionCount);
+
+	                  if (metalNow) {
+	                      playMetalDetect();
+	                      printf("play tune\r\n");
+	                  } else {
+	                	  stopTone();
+	                  }
+	              }
+	          }
+	      }
 
 	if (ENABLE_OBJ_DETECTION == 1) {
 		HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
@@ -338,21 +401,19 @@ int main(void)
 		for (int i = 0 ; i < 10; i++) { micros();}
 
 		HAL_GPIO_WritePin(TRIG_PORT, TRIG_PIN, GPIO_PIN_RESET);
-		//lcd_clear(&lcd1);
 
 
 		uint32_t t0 = HAL_GetTick();
 		while (!echo_done && (HAL_GetTick() - t0 < 100));
 
 		if (echo_pulse_us < 40000) {
-			HAL_Delay(100);
-			char lcd_buf[17];
-			float distance = echo_pulse_us * 11.5 / 610.0;
+			// original ratio:  11.5 / 610.0
+			float distance = echo_pulse_us * 0.01791810;
 
 			int rounded = distance * 100 / 1;
 
 			//snprintf(lcd_buf, sizeof(lcd_buf), "Distance = %.2f cm\r\n", distance);
-			//printf("Pulse: " PRIu32 "\r\n", echo_pulse_us);
+			//printf("Pulse:  %d \r\n", echo_pulse_us);
 
 			// SEND VIA BLUETOOTH "distance" VARIBALE
 			printf("Distance = %.2f cm, Rounded = %d cm\r\n", distance, rounded);
@@ -380,9 +441,9 @@ int main(void)
 		printf("Running tim3 and tim4 pwm gen.\r\n");
 		motor1(0, 1.0, 0);
 		motor2(0, 1.0, 0);
-		HAL_Delay(1-00);
-		stopMotor1();
-		stopMotor2();
+//		HAL_Delay(1-00);
+//		stopMotor1();
+//		stopMotor2();
 	}
 
 	if (ENABLE_BT_MOTOR == 1) {
@@ -419,8 +480,6 @@ int main(void)
 
 		        printf("Parsed -> L:%d R:%d\r\n", bt_motorL, bt_motorR);
 
-		        printf("%f, %f\r\n", bt_motorL/100.0, bt_motorR/100.0);
-
 		        if (bt_motorL > 0) {
 		        	motor1(0, bt_motorL/100.0, 0);
 		        } else if (bt_motorL < 0) {
@@ -444,15 +503,25 @@ int main(void)
 		        printf("Bad packet: %s\r\n", local);
 		    }
 		}
-		HAL_Delay(100);
+	}
+
+	if (WALLE == 1) {
+
+			// PSC = 83, F_CLK = 84,000,000
+
+
+
+
 	}
 
 
+	HAL_Delay(WHILE_DELAY);
 
+  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+
   /* USER CODE END 3 */
 }
 
@@ -517,6 +586,8 @@ static void MX_TIM1_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   /* USER CODE BEGIN TIM1_Init 1 */
 
@@ -537,15 +608,41 @@ static void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -750,6 +847,7 @@ static void MX_TIM5_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
 
   /* USER CODE BEGIN TIM5_Init 1 */
 
@@ -769,15 +867,28 @@ static void MX_TIM5_Init(void)
   {
     Error_Handler();
   }
+  if (HAL_TIM_PWM_Init(&htim5) != HAL_OK)
+  {
+    Error_Handler();
+  }
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN TIM5_Init 2 */
 
   /* USER CODE END TIM5_Init 2 */
+  HAL_TIM_MspPostInit(&htim5);
 
 }
 
