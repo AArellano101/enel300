@@ -77,7 +77,7 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 #define CYCLES_PER_SIGNAL   500
 #define LED_THRESHOLD       700
-#define SENSITIVITY         40.0f
+#define SENSITIVITY         25.0f
 #define SERIAL_INTERVAL_MS  50
 
 // Pins
@@ -125,6 +125,10 @@ void Error_Handler(void);
 #define ENABLE_MOTOR_SIGNAL 		0
 #define ENABLE_BT_MOTOR 			1
 #define ENABLE_BT_OBJ				1
+#define WALLE 						0
+
+#define WHILE_DELAY					200
+#define METALBEATCOUNT 4
 
 /* USER CODE END Private defines */
 

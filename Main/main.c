@@ -57,6 +57,7 @@ volatile uint32_t interruptCount  = 0;
 volatile uint32_t metalDetectionCount = 0;
 volatile uint32_t metalDetectionThreshold = 3;
 
+
 uint32_t lastPrintTime = 0;
 
 volatile uint32_t echo_rise_time = 0;
@@ -192,19 +193,19 @@ void playStartupTune(void)
     playSong(notes, durations, sizeof(notes) / sizeof(notes[0]), 22);
 }
 
-void playMetalDetect(void)
-{
-    static const note_t notes[] = {
+static const note_t METAL_NOTES[] = {
         //900, 1450, 2400, 2850
 
-    	500, 550, 600, 650
+    	500, 500, 500, 500
     };
 
+void playMetalDetect(void)
+{
     static const uint16_t durations[] = {
         45, 55, 85, 160
     };
 
-    playSong(notes, durations, 4, 100);
+    playSong(METAL_NOTES, durations, 4, 100);
 }
 
 
@@ -382,7 +383,10 @@ int main(void)
 	                         metalDetectionCount);
 
 	                  if (metalNow) {
-	                      playMetalDetect();
+	                	  playTone(METAL_NOTES[metalDetectionCount % METALBEATCOUNT]);
+
+	                	  printf("%d",METAL_NOTES[metalDetectionCount % METALBEATCOUNT]);
+	                      //playMetalDetect();
 	                      printf("play tune\r\n");
 	                  } else {
 	                	  stopTone();
@@ -502,15 +506,6 @@ int main(void)
 		        printf("Bad packet: %s\r\n", local);
 		    }
 		}
-	}
-
-	if (WALLE == 1) {
-
-			// PSC = 83, F_CLK = 84,000,000
-
-
-
-
 	}
 
 
