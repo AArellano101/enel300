@@ -41,6 +41,9 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
+TIM_HandleTypeDef htim12;
+TIM_HandleTypeDef htim13;
+TIM_HandleTypeDef htim14;
 
 UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart2;
@@ -99,6 +102,9 @@ static void MX_USART3_UART_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_TIM12_Init(void);
+static void MX_TIM13_Init(void);
+static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -196,7 +202,7 @@ void playStartupTune(void)
 static const note_t METAL_NOTES[] = {
         //900, 1450, 2400, 2850
 
-    	500, 500, 500, 500
+    	500, 500, 600, 500
     };
 
 void playMetalDetect(void)
@@ -209,6 +215,16 @@ void playMetalDetect(void)
 }
 
 
+// 				SERVO MOTOR FUNCTIONS
+//---------------------------------------------------------
+
+void Set_Servo_Angle(TIM_HandleTypeDef *htim, uint32_t channel, uint8_t angle)
+{
+    if (angle > 180) angle = 180;
+
+    uint32_t pulse = 500 + ((uint32_t)angle * 2000) / 180;
+    __HAL_TIM_SET_COMPARE(htim, channel, pulse);
+}
 
 // 				BLUETOOTH FUNCTIONS
 //---------------------------------------------------------
@@ -324,7 +340,17 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM1_Init();
   MX_TIM5_Init();
+  MX_TIM12_Init();
+  MX_TIM13_Init();
+  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_1);   // PB14
+  HAL_TIM_PWM_Start(&htim13, TIM_CHANNEL_1);   // PA6
+  HAL_TIM_PWM_Start(&htim14, TIM_CHANNEL_1);   // PA7
+
+  Set_Servo_Angle(&htim12, TIM_CHANNEL_1, 90); // PB14 center
+  Set_Servo_Angle(&htim13, TIM_CHANNEL_1, 90); // PA6 center
+  Set_Servo_Angle(&htim14, TIM_CHANNEL_1, 90); // PA7 center
 
 
   DWT_Init();
@@ -382,12 +408,14 @@ int main(void)
 	                         metalNow ? "YES" : "no",
 	                         metalDetectionCount);
 
+	                  printf("Baseline: %lu us  |  Current: %lu us  |  Diff: %ld  |  Metal: %s\r\n",
+	                  		          storedTimeDelta,
+	                  		          signalTimeDelta,
+	                  		          diff,
+	                  		          diff > LED_THRESHOLD ? "YES" : "no");
+
 	                  if (metalNow) {
 	                	  playTone(METAL_NOTES[metalDetectionCount % METALBEATCOUNT]);
-
-	                	  printf("%d",METAL_NOTES[metalDetectionCount % METALBEATCOUNT]);
-	                      //playMetalDetect();
-	                      printf("play tune\r\n");
 	                  } else {
 	                	  stopTone();
 	                  }
@@ -420,6 +448,7 @@ int main(void)
 
 			// SEND VIA BLUETOOTH "distance" VARIBALE
 			printf("Distance = %.2f cm, Rounded = %d cm\r\n", distance, rounded);
+
 			if (ENABLE_BT_OBJ == 1) {
 				char buffer_o[25];
 				printf("Sending signal...\r\n");
@@ -439,6 +468,9 @@ int main(void)
 		HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 		HAL_Delay(500);
 	}
+
+	/* USER CODE BEGIN 0 */
+
 
 	if (ENABLE_MOTOR_SIGNAL == 1) {
 		printf("Running tim3 and tim4 pwm gen.\r\n");
@@ -468,6 +500,19 @@ int main(void)
 		        bt_motorL = (int16_t)l;
 		        bt_motorR = (int16_t)r;
 		        bt_light = (int16_t)q;
+
+		        int turn = bt_motorL - bt_motorR;
+		        	if (turn > 100) turn = 100;
+		        	if (turn < -100) turn = -100;
+
+
+		        int head_angle = 90 + (turn * 45) / 100;
+		        	if (head_angle > 135) head_angle = 135;
+		        	if (head_angle < 45) head_angle = 135;
+
+		   Set_Servo_Angle(&htim12, TIM_CHANNEL_1,head_angle);
+
+
 
 		        if (bt_light == 0) {
 
@@ -615,9 +660,14 @@ static void MX_TIM1_Init(void)
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
@@ -748,6 +798,10 @@ static void MX_TIM3_Init(void)
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -883,6 +937,140 @@ static void MX_TIM5_Init(void)
 
   /* USER CODE END TIM5_Init 2 */
   HAL_TIM_MspPostInit(&htim5);
+
+}
+
+/**
+  * @brief TIM12 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM12_Init(void)
+{
+
+  /* USER CODE BEGIN TIM12_Init 0 */
+
+  /* USER CODE END TIM12_Init 0 */
+
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM12_Init 1 */
+
+  /* USER CODE END TIM12_Init 1 */
+  htim12.Instance = TIM12;
+  htim12.Init.Prescaler = 84-1;
+  htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim12.Init.Period = 19999;
+  htim12.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim12.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim12) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim12, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM12_Init 2 */
+
+  /* USER CODE END TIM12_Init 2 */
+  HAL_TIM_MspPostInit(&htim12);
+
+}
+
+/**
+  * @brief TIM13 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM13_Init(void)
+{
+
+  /* USER CODE BEGIN TIM13_Init 0 */
+
+  /* USER CODE END TIM13_Init 0 */
+
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM13_Init 1 */
+
+  /* USER CODE END TIM13_Init 1 */
+  htim13.Instance = TIM13;
+  htim13.Init.Prescaler = 84-1;
+  htim13.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim13.Init.Period = 19999;
+  htim13.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim13.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim13) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim13) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim13, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM13_Init 2 */
+
+  /* USER CODE END TIM13_Init 2 */
+  HAL_TIM_MspPostInit(&htim13);
+
+}
+
+/**
+  * @brief TIM14 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM14_Init(void)
+{
+
+  /* USER CODE BEGIN TIM14_Init 0 */
+
+  /* USER CODE END TIM14_Init 0 */
+
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM14_Init 1 */
+
+  /* USER CODE END TIM14_Init 1 */
+  htim14.Instance = TIM14;
+  htim14.Init.Prescaler = 84-1;
+  htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim14.Init.Period = 19999;
+  htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim14) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim14, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM14_Init 2 */
+
+  /* USER CODE END TIM14_Init 2 */
+  HAL_TIM_MspPostInit(&htim14);
 
 }
 
