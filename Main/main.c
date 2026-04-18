@@ -415,7 +415,7 @@ int main(void)
 	                  		          diff > LED_THRESHOLD ? "YES" : "no");
 
 	                  if (metalNow) {
-	                	  playTone(METAL_NOTES[metalDetectionCount % METALBEATCOUNT]);
+	                	  playTone(500);
 	                  } else {
 	                	  stopTone();
 	                  }
@@ -530,17 +530,21 @@ int main(void)
 
 		        if (bt_motorL > 0) {
 		        	motor1(0, bt_motorL/100.0, 0);
+		        	metalDetectionCount = 0;
 		        } else if (bt_motorL < 0) {
 		        	motor1(0, bt_motorL/100.0, 1);
+		        	metalDetectionCount = 0;
 		        } else {
 		        	stopMotor1();
 		        }
 
 		        if (bt_motorR > 0) {
 					motor2(0, bt_motorR/100.0, 0);
+					metalDetectionCount = 0;
 				}
 		        else if (bt_motorR < 0) {
 		        	motor2(0, bt_motorR/100.0, 1);
+		        	metalDetectionCount = 0;
 		        } else {
 					stopMotor2();
 				}
