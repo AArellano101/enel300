@@ -17,11 +17,13 @@ Ultimately, our car found success in the end-of-term classwide competition, winn
 Unofficially, our car has also become a “people’s favourite” amongst TA’s and students alike for its striking resemblance to the playful robot that it is inspired by. We can proudly say that a countless number of our peers (and even TAs!) have described our car as their favourite. 
 
 
-## Project Images
+## Project Images + Video
 
 ![first_inge](first_inge.jpg)
 
 ![walle](walle.jpg)
+
+[Watch him moving!](walle-moving.mp4)
 
 <br>
 
